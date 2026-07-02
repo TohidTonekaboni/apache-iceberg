@@ -1,5 +1,13 @@
 # Apache Iceberg — Practical Learning Roadmap
 
+[![Apache Iceberg](https://img.shields.io/badge/Apache%20Iceberg-1B1F23?style=for-the-badge)](https://iceberg.apache.org/)
+[![Apache Polaris](https://img.shields.io/badge/Apache%20Polaris-2F4B7C?style=for-the-badge)](https://polaris.apache.org/)
+[![Apache Spark](https://img.shields.io/badge/Apache%20Spark-E25A1C?style=for-the-badge&logo=apachespark&logoColor=white)](https://spark.apache.org/)
+[![Trino](https://img.shields.io/badge/Trino-DD00A1?style=for-the-badge&logo=trino&logoColor=white)](https://trino.io/)
+[![Dremio](https://img.shields.io/badge/Dremio-2496ED?style=for-the-badge)](https://www.dremio.com/)
+[![MinIO](https://img.shields.io/badge/MinIO-C72E49?style=for-the-badge&logo=minio&logoColor=white)](https://min.io/)
+[![Docker](https://img.shields.io/badge/Docker-2496ED?style=for-the-badge&logo=docker&logoColor=white)](https://www.docker.com/)
+
 A hands-on, project-based path to deeply learning **Apache Iceberg** as a table
 format and **Apache Polaris** (plus the **Iceberg REST Catalog**) as catalog
 implementations — using **Spark**, **Trino**, and **Dremio** as the three query engines.
@@ -51,6 +59,8 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
 
 **Goal:** stop treating Iceberg as a black box. Open the actual files it wrote in MinIO and match them to the spec.
 
+![Iceberg metadata structure: catalog → metadata file → manifest list → manifest file → data files](https://iceberg.apache.org/assets/images/iceberg-metadata.png)
+
 - 🛠
   - `mc` (already in compose) or the MinIO console: browse `s3://warehouse/db/orders/metadata/` and `.../data/`.
   - Download and `cat`/`jq` the latest `v<N>.metadata.json` — identify `current-snapshot-id`, `snapshots[]`, `schemas[]`, `partition-specs[]`.
@@ -92,6 +102,8 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
 ---
 
 ## Phase 5 — Apache Polaris as a Catalog
+
+![Polaris Catalog — the interoperable, open source catalog for Apache Iceberg](https://polaris.apache.org/img/Polaris-Catalog-BLOG-symmetrical-subhead.png)
 
 **Goal:** run Polaris for real, understand it's a REST-catalog-protocol implementation *plus* multi-tenant governance (principals, roles, catalog-level RBAC, credential vending) that the bare REST fixture doesn't have.
 
