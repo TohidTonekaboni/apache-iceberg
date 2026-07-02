@@ -2,7 +2,7 @@
 
 A hands-on, project-based path to deeply learning **Apache Iceberg** as a table
 format and **Apache Polaris** (plus the **Iceberg REST Catalog**) as catalog
-implementations — using **Spark** and **Trino** as the two query engines.
+implementations — using **Spark**, **Trino**, and **Dremio** as the three query engines.
 
 Every phase has three layers, do them in order and don't skip layer 2/3 just
 because layer 1 "works":
@@ -12,8 +12,8 @@ because layer 1 "works":
 - 📖 **Spec / source** — the primary source to actually read, not a blog post about it.
 
 Environment lives in [docker-compose.yml](docker-compose.yml). We'll grow it
-phase by phase (Spark + REST catalog + MinIO exist already; Trino and Polaris
-get added in Phase 3 and Phase 5).
+phase by phase (Spark + REST catalog + MinIO exist already; Trino and Dremio
+get added in Phase 3, Polaris gets added in Phase 5).
 
 ---
 
@@ -26,7 +26,7 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
   - `docker compose up -d` and confirm `minio`, `rest`, `spark-iceberg` are healthy.
   - Open MinIO console (`localhost:9001`, admin/password) — watch the empty `warehouse` bucket.
   - Open the Spark notebook UI (`localhost:8888`) and run `spark.sql("SHOW NAMESPACES").show()`.
-- 🔬 Draw the stack for yourself: Client (Spark/Trino) → Catalog (REST/Polaris) → Table Metadata (S3/MinIO) → Data Files (Parquet, on S3/MinIO). Identify which piece each existing docker service plays.
+- 🔬 Draw the stack for yourself: Client (Spark/Trino/Dremio) → Catalog (REST/Polaris) → Table Metadata (S3/MinIO) → Data Files (Parquet, on S3/MinIO). Identify which piece each existing docker service plays.
 - 📖 Read the Iceberg docs overview: https://iceberg.apache.org/docs/latest/ and the "Why Iceberg" motivation section — specifically what problem it solves vs. Hive tables (no atomic commits, partition = physical layout, no schema evolution safety).
 
 ---
@@ -62,17 +62,19 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
 
 ---
 
-## Phase 3 — Multi-Engine Interoperability (add Trino)
+## Phase 3 — Multi-Engine Interoperability (add Trino & Dremio)
 
-**Goal:** prove Iceberg's core value prop — the *same table*, same catalog, read/written correctly from two different engines.
+**Goal:** prove Iceberg's core value prop — the *same table*, same catalog, read/written correctly from three different engines.
 
 - 🛠
   - Add a `trino` service to `docker-compose.yml` pointing its Iceberg connector at the same REST catalog (`iceberg.rest-catalog.uri=http://rest:8181`) and MinIO warehouse.
-  - From Trino: `SELECT * FROM iceberg.db.orders` — same rows Spark wrote.
-  - Write from Trino (`INSERT INTO ...`), then re-read from Spark and confirm the new snapshot shows up in `.history`.
-  - Force a conflict: start a long write in Spark, concurrently write from Trino, observe optimistic-concurrency retry/failure behavior in the catalog commit.
-- 🔬 Understand there is no engine-specific metadata — the metadata.json/manifests are engine-agnostic, so interoperability is a property of the **format + catalog protocol**, not connector code. Compare how each engine's Iceberg connector implements planning (both must do manifest pruning independently, per the same stats).
-- 📖 Trino Iceberg connector docs (https://trino.io/docs/current/connector/iceberg.html) — read the "Concurrent writes" and "Table properties" sections specifically.
+  - Add a `dremio` service (official `dremio/dremio-oss` image) and configure an Iceberg REST source pointing at the same catalog/warehouse (Dremio's "Iceberg REST Catalog" or "Nessie/Arctic" source type, plus its S3 source config for MinIO).
+  - From Trino: `SELECT * FROM iceberg.db.orders` — same rows Spark wrote. From Dremio's SQL editor: the same query against the same table via its added source.
+  - Write from Trino (`INSERT INTO ...`), then re-read from Spark and Dremio and confirm the new snapshot shows up in `.history`.
+  - In Dremio, build a **reflection** (Dremio's materialized-view/query-acceleration feature) on top of the table and compare query plans/latency with and without it — this is the one feature the other two engines don't have.
+  - Force a conflict: start a long write in Spark, concurrently write from Trino or Dremio, observe optimistic-concurrency retry/failure behavior in the catalog commit.
+- 🔬 Understand there is no engine-specific metadata — the metadata.json/manifests are engine-agnostic, so interoperability is a property of the **format + catalog protocol**, not connector code. Compare how each engine's Iceberg connector implements planning (all three must do manifest pruning independently, per the same stats) and note that Dremio adds a layer on top (reflections, semantic layer/virtual datasets) that sits outside the Iceberg spec entirely.
+- 📖 Trino Iceberg connector docs (https://trino.io/docs/current/connector/iceberg.html) — read the "Concurrent writes" and "Table properties" sections specifically. Dremio docs on Iceberg tables and reflections: https://docs.dremio.com/current/reference/sql/commands/apache-iceberg-tables/ and https://docs.dremio.com/current/sonar/reflections/.
 
 ---
 
@@ -97,8 +99,8 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
   - Add a `polaris` service to `docker-compose.yml` (official image `apache/polaris`), backed by the same MinIO warehouse (separate prefix, e.g. `s3://warehouse/polaris/`).
   - Bootstrap: create a root principal/credentials, create a **catalog**, a **principal role**, a **catalog role**, and grant privileges (`CATALOG_MANAGE_CONTENT`, `TABLE_READ_DATA`, etc.) — do this via Polaris's own REST management API with `curl`, not just the CLI, so you see the objects being created.
   - Point Spark's Iceberg catalog config at Polaris instead of the REST fixture (`spark.sql.catalog.polaris.uri`, `credential`, `scope=PRINCIPAL_ROLE:ALL`). Recreate the Phase 1 table under Polaris.
-  - Point Trino at Polaris too — confirm the same multi-engine interop from Phase 3 now works through Polaris.
-  - Create a second, restricted principal (read-only catalog role) and prove it can `SELECT` but not `INSERT`/`DROP`.
+  - Point Trino and Dremio at Polaris too — confirm the same multi-engine interop from Phase 3 now works through Polaris for all three engines.
+  - Create a second, restricted principal (read-only catalog role) and prove it can `SELECT` but not `INSERT`/`DROP` from each of Spark, Trino, and Dremio.
   - Inspect the **vended credentials**: capture the temporary S3 STS-style credentials Polaris hands to the engine per-request and note their scope/expiry vs. the static `admin/password` MinIO keys used by the plain REST fixture.
 - 🔬 Polaris = REST Catalog protocol (Phase 4) + an authorization/governance layer (principals → principal roles → catalog roles → grants) + credential vending, implemented on Iceberg's own `PolarisCatalog` (which itself wraps the same table-metadata machinery from Phase 2). It's an implementation choice, not a different table format.
 - 📖 Polaris docs: https://polaris.apache.org/, especially "Getting Started" and "Access Control". Skim the Polaris source (https://github.com/apache/polaris) for `PolarisEntity`/`Grant` model and how it maps role grants to the REST catalog's auth checks.
@@ -109,7 +111,7 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
 
 **Goal:** be able to justify a catalog choice in a design review.
 
-- 🛠 Run the identical script (create table, grant/deny, vend credentials, concurrent write from two engines) against both `rest` and `polaris` services side by side and produce a short comparison note covering: multi-tenancy/RBAC, credential vending, multi-catalog federation, external catalog federation (Polaris can front Glue/other catalogs), operational maturity, HA/storage backend for its own metastore.
+- 🛠 Run the identical script (create table, grant/deny, vend credentials, concurrent write from Spark/Trino/Dremio) against both `rest` and `polaris` services side by side and produce a short comparison note covering: multi-tenancy/RBAC, credential vending, multi-catalog federation, external catalog federation (Polaris can front Glue/other catalogs), operational maturity, HA/storage backend for its own metastore.
 - 🔬 Both speak the same wire protocol (Phase 4 spec) — the difference is entirely in what sits behind that protocol: the fixture is an in-memory/JDBC reference implementation meant for testing; Polaris is a production-grade multi-tenant service with its own persistence layer for grants/principals.
 - 📖 Iceberg REST fixture source (small, worth skimming in full): https://github.com/apache/iceberg/tree/main/open-api — vs. Polaris's `polaris-service` module.
 
@@ -158,8 +160,8 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
 
 **Goal:** put it all together as one small but "real" project.
 
-- 🛠 Build an ingestion path: Spark batch-writes raw events into an Iceberg table cataloged in Polaris → scheduled compaction/expire job → Trino used purely for ad-hoc analytics queries against the same table, under a read-only Polaris principal role. Add basic partitioning/sort strategy justified from Phase 8/9 knowledge, and a runbook covering the Phase 7 maintenance jobs.
-- 🔬 By this point you should be able to explain, unprompted, every hop from a Trino `SELECT` down to the Parquet bytes in MinIO, and every hop from a Spark `INSERT` up through manifest/metadata commit at Polaris.
+- 🛠 Build an ingestion path: Spark batch-writes raw events into an Iceberg table cataloged in Polaris → scheduled compaction/expire job → Trino used for ad-hoc analytics queries and Dremio used as a BI-facing semantic layer (virtual datasets + a reflection for a dashboard-style query), both against the same table, under a read-only Polaris principal role. Add basic partitioning/sort strategy justified from Phase 8/9 knowledge, and a runbook covering the Phase 7 maintenance jobs.
+- 🔬 By this point you should be able to explain, unprompted, every hop from a Trino or Dremio `SELECT` down to the Parquet bytes in MinIO, and every hop from a Spark `INSERT` up through manifest/metadata commit at Polaris — including where Dremio's reflections sit outside that path entirely (they're a cached/accelerated physical layout Dremio manages itself, not an Iceberg spec concept).
 - 📖 Revisit any spec section that still feels fuzzy — this phase is the test.
 
 ---
@@ -171,7 +173,7 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
 | 0 | Environment | 0.5 day |
 | 1 | Core SQL ops | 1 day |
 | 2 | Metadata internals | 2 days |
-| 3 | Trino interop | 1 day |
+| 3 | Trino & Dremio interop | 1.5 days |
 | 4 | REST protocol | 1 day |
 | 5 | Polaris | 2–3 days |
 | 6 | REST vs Polaris | 0.5 day |
@@ -189,3 +191,5 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
 - Polaris docs: https://polaris.apache.org/
 - Polaris source: https://github.com/apache/polaris
 - Trino Iceberg connector: https://trino.io/docs/current/connector/iceberg.html
+- Dremio Iceberg tables: https://docs.dremio.com/current/reference/sql/commands/apache-iceberg-tables/
+- Dremio reflections: https://docs.dremio.com/current/sonar/reflections/
