@@ -19,9 +19,9 @@ because layer 1 "works":
 - 🔬 **Internals** — the file format / protocol you should be able to explain on a whiteboard.
 - 📖 **Spec / source** — the primary source to actually read, not a blog post about it.
 
-Environment lives in [docker-compose.yml](docker-compose.yml). We'll grow it
-phase by phase (Spark + REST catalog + MinIO exist already; Trino and Dremio
-get added in Phase 3, Polaris gets added in Phase 5).
+Environment lives in [docker-compose.yml](docker-compose.yml). Spark, Trino,
+Dremio, the REST catalog, and MinIO are all already defined there; Polaris gets
+added in Phase 5.
 
 ---
 
@@ -31,9 +31,11 @@ get added in Phase 3, Polaris gets added in Phase 5).
 that Hive smashed together: *table format*, *file format*, *catalog*, *compute engine*.
 
 - 🛠
-  - `docker compose up -d` and confirm `minio`, `rest`, `spark-iceberg` are healthy.
-  - Open MinIO console (`localhost:9001`, admin/password) — watch the empty `warehouse` bucket.
+  - `docker compose up -d` and confirm `minio`, `rest`, `spark-iceberg`, `trino`, and `dremio` are all healthy.
+  - Open MinIO console (`localhost:9001`) — watch the empty `warehouse` bucket.
   - Open the Spark notebook UI (`localhost:8888`) and run `spark.sql("SHOW NAMESPACES").show()`.
+  - Open the Trino UI (`localhost:8081`) and run `trino --server localhost:8081 --catalog iceberg --execute "SHOW SCHEMAS"` (no tables/config beyond `iceberg.properties` needed — it already points at the REST catalog).
+  - Open the Dremio UI (`localhost:9047`), complete the first-run admin setup, and note that Dremio's Iceberg REST/S3 sources still need to be added by hand (that's Phase 3) — for now just confirm the container is up.
 - 🔬 Draw the stack for yourself: Client (Spark/Trino/Dremio) → Catalog (REST/Polaris) → Table Metadata (S3/MinIO) → Data Files (Parquet, on S3/MinIO). Identify which piece each existing docker service plays.
 - 📖 Read the Iceberg docs overview: https://iceberg.apache.org/docs/latest/ and the "Why Iceberg" motivation section — specifically what problem it solves vs. Hive tables (no atomic commits, partition = physical layout, no schema evolution safety).
 
@@ -72,13 +74,13 @@ that Hive smashed together: *table format*, *file format*, *catalog*, *compute e
 
 ---
 
-## Phase 3 — Multi-Engine Interoperability (add Trino & Dremio)
+## Phase 3 — Multi-Engine Interoperability (Trino & Dremio)
 
 **Goal:** prove Iceberg's core value prop — the *same table*, same catalog, read/written correctly from three different engines.
 
 - 🛠
-  - Add a `trino` service to `docker-compose.yml` pointing its Iceberg connector at the same REST catalog (`iceberg.rest-catalog.uri=http://rest:8181`) and MinIO warehouse.
-  - Add a `dremio` service (official `dremio/dremio-oss` image) and configure an Iceberg REST source pointing at the same catalog/warehouse (Dremio's "Iceberg REST Catalog" or "Nessie/Arctic" source type, plus its S3 source config for MinIO).
+  - Trino's `iceberg` catalog ([trino/catalog/iceberg.properties](trino/catalog/iceberg.properties)) already points at the same REST catalog (`iceberg.rest-catalog.uri=http://rest:8181`) and MinIO warehouse from Phase 0 — nothing to add here.
+  - In the Dremio UI, add a new source pointing at the same catalog/warehouse (Dremio's "Iceberg REST Catalog" or "Nessie/Arctic" source type, plus its S3 source config for MinIO) — this manual setup is the one piece Dremio doesn't get for free from `docker-compose.yml`.
   - From Trino: `SELECT * FROM iceberg.db.orders` — same rows Spark wrote. From Dremio's SQL editor: the same query against the same table via its added source.
   - Write from Trino (`INSERT INTO ...`), then re-read from Spark and Dremio and confirm the new snapshot shows up in `.history`.
   - In Dremio, build a **reflection** (Dremio's materialized-view/query-acceleration feature) on top of the table and compare query plans/latency with and without it — this is the one feature the other two engines don't have.
